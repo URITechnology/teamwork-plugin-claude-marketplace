@@ -5,14 +5,17 @@
     "email": "thughes@urimarketing.com"
   },
   "metadata": {
-    "description": "Plugins for Teamwork sprint management, project tracking, and more.",
-    "pluginRoot": "./plugins"
+    "description": "Plugins for Teamwork sprint management, project tracking, and more."
   },
   "plugins": [
     {
       "name": "teamwork-sprint-manager",
-      "source": "teamwork-sprint-manager",
+      "source": "./plugins/teamwork-sprint-manager",
       "description": "Sprint management for Teamwork Projects — track task status, compare estimates vs. actuals, analyze velocity, and plan future sprints.",
+      "version": "1.0.0",
+      "author": {
+        "name": "URI Technology"
+      },
       "keywords": ["teamwork", "sprint", "project-management", "velocity", "time-tracking"],
       "category": "project-management"
     }

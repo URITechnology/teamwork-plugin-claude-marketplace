@@ -240,6 +240,166 @@ def get_time_entries_for_tasks(task_ids):
     return result
 
 
+def get_board_columns_for_project(project_id):
+    """
+    Fetch all board columns for a project.
+
+    Args:
+        project_id: Teamwork project ID
+
+    Returns:
+        List of column dicts with id, name, displayOrder, etc.
+    """
+    return fetch_all_pages(
+        f"/projects/{project_id}/boards/columns.json",
+        params={"getStats": "true"},
+        result_key="columns",
+    )
+
+
+def get_cards_for_column(column_id):
+    """
+    Fetch all cards in a board column.
+
+    Args:
+        column_id: Teamwork board column ID
+
+    Returns:
+        List of card dicts with taskId, columnId, name, etc.
+    """
+    return fetch_all_pages(
+        f"/boards/columns/{column_id}/cards.json",
+        result_key="cards",
+    )
+
+
+def get_board_status_for_tasks(tasks):
+    """
+    Determine each task's board column name by looking up project boards.
+
+    Groups tasks by projectId, fetches board columns for each project,
+    then fetches cards per column to build a taskId -> columnName mapping.
+
+    Args:
+        tasks: list of task dicts (must have 'id' and 'projectId')
+
+    Returns:
+        dict: {task_id (int): column_name (str)}
+        Tasks not on any board are omitted from the dict.
+    """
+    # Build set of task IDs we care about
+    target_task_ids = set()
+    projects = {}
+    for task in tasks:
+        tid = task.get("id")
+        pid = task.get("projectId")
+        if tid and pid:
+            target_task_ids.add(int(tid))
+            projects.setdefault(int(pid), set()).add(int(tid))
+
+    task_column_map = {}
+    project_count = len(projects)
+
+    for idx, (project_id, task_id_set) in enumerate(projects.items()):
+        # Fetch columns for this project
+        columns = get_board_columns_for_project(project_id)
+
+        for column in columns:
+            col_id = column.get("id")
+            col_name = column.get("name", "")
+
+            # Skip empty columns (use stats if available)
+            stats = column.get("stats", {})
+            total_cards = stats.get("total", None)
+            if total_cards is not None and int(total_cards) == 0:
+                continue
+
+            # Fetch cards in this column
+            cards = get_cards_for_column(col_id)
+
+            for card in cards:
+                card_task_id = card.get("taskId")
+                if card_task_id:
+                    card_task_id = int(card_task_id)
+                    if card_task_id in target_task_ids:
+                        task_column_map[card_task_id] = col_name
+
+        # Rate limit protection between projects
+        if project_count > 3 and idx < project_count - 1:
+            time.sleep(0.3)
+
+    return task_column_map
+
+
+def get_time_entries_by_date_range(from_date, to_date, user_id=None):
+    """
+    Fetch time entries for a date range, optionally filtered by user.
+
+    Args:
+        from_date: start date string (YYYY-MM-DD)
+        to_date: end date string (YYYY-MM-DD)
+        user_id: optional Teamwork user ID to filter by
+
+    Returns:
+        List of time entry dicts
+    """
+    params = {
+        "fromDate": from_date,
+        "toDate": to_date,
+    }
+    if user_id:
+        params["userId"] = user_id
+    return fetch_all_pages("/time.json", params, result_key="timelogs")
+
+
+def get_task_by_id(task_id):
+    """
+    Fetch a single task with tags and project info included.
+
+    Args:
+        task_id: Teamwork task ID
+
+    Returns:
+        Task dict or None if not found
+    """
+    response = make_request(f"/tasks/{task_id}.json", params={"include": "tags"})
+    if response and "task" in response:
+        return response["task"]
+    return response
+
+
+def get_project_by_id(project_id):
+    """
+    Fetch a single project's details.
+
+    Args:
+        project_id: Teamwork project ID
+
+    Returns:
+        Project dict or None if not found
+    """
+    response = make_request(f"/projects/{project_id}.json")
+    if response and "project" in response:
+        return response["project"]
+    return response
+
+
+def get_tasklist_by_id(tasklist_id):
+    """
+    Fetch a single task list's details.
+
+    Args:
+        tasklist_id: Teamwork task list ID
+
+    Returns:
+        Task list dict or None if not found
+    """
+    response = make_request(f"/tasklists/{tasklist_id}.json")
+    if response and "tasklist" in response:
+        return response["tasklist"]
+    return response
+
+
 def minutes_to_hours(minutes):
     """Convert minutes to hours, rounded to 1 decimal."""
     if minutes is None or minutes == 0:

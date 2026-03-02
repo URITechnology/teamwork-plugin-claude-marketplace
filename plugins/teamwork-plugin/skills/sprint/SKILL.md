@@ -1,5 +1,5 @@
 ---
-name: teamwork-sprint-manager
+name: teamwork-plugin
 description: |
   Sprint management skill for teams using Teamwork Projects. Connects to the Teamwork Projects API to help project managers track sprint tasks, compare time estimates vs. actuals, analyze team velocity, and plan future sprints. Your team uses tags/categories in Teamwork to organize tasks into sprints.
 
@@ -64,6 +64,37 @@ For complete endpoint documentation, see `references/api-endpoints.md`. The most
 | Late task count | `GET /projects/api/v3/tasks/metrics/late.json` |
 | People utilization | `GET /projects/api/v3/people/utilization.json` |
 | People performance | `GET /projects/api/v3/people/metrics/performance.json` |
+| Board columns for a project | `GET /projects/api/v3/projects/{id}/boards/columns.json` |
+| Cards in a board column | `GET /projects/api/v3/boards/columns/{id}/cards.json` |
+
+## Board Status
+
+Teamwork boards provide a Kanban-style workflow for tasks. Each project can have board columns that represent workflow stages. Common column names used by this team:
+
+- **On Staging** — Task is deployed to the staging environment for review
+- **Ready for Production** — Task has been approved and is waiting for production deployment
+- **On Production** — Task has been deployed to production
+- **Done** — Task is fully complete and verified
+
+### How board status works
+
+Tasks appear as "cards" within board columns. To determine a task's workflow stage:
+1. Look up the task's `projectId`
+2. Fetch the project's board columns: `GET /projects/{projectId}/boards/columns.json?getStats=true`
+3. For each column that has cards, fetch the cards: `GET /boards/columns/{columnId}/cards.json`
+4. Match the card's `taskId` to find which column the task is in
+
+The helper function `tw_api.get_board_status_for_tasks(tasks)` automates this — pass a list of task dicts and it returns a `{task_id: column_name}` mapping. Tasks not on any board are omitted from the result.
+
+### Board status classification for reporting
+
+When generating reports, combine task `status` with board column name:
+- **Complete**: `status == "completed"` OR board column is "On Production" or "Done"
+- **On Staging**: task is not completed AND board column is "On Staging"
+- **Ready for Production**: task is not completed AND board column is "Ready for Production"
+- **Incomplete**: everything else (open tasks not yet on staging/production/done)
+
+See `references/api-endpoints.md` → Boards section for full endpoint documentation.
 
 ## Core Workflows
 
@@ -115,7 +146,34 @@ python3 scripts/velocity_report.py --last-n-sprints 5
 
 Be honest about uncertainty. If the team's velocity has high variance, say so — "Your velocity ranges from 80 to 140 hours per sprint, so I'd plan conservatively around 90-100 hours."
 
-### 4. Ad-Hoc Questions
+### 4. Sprint Summary Report
+
+When someone asks for a sprint summary or uses the `/teamwork-plugin:sprint-summary` command:
+
+1. **Collect inputs** — Sprint number (e.g., 45), sprint start date (YYYY-MM-DD), and sprint end date (YYYY-MM-DD).
+2. **Verify credentials** are set (same as session startup check above).
+3. **Run the sprint summary script**:
+   ```bash
+   pip install openpyxl 2>/dev/null || pip3 install openpyxl 2>/dev/null
+   python3 scripts/sprint_summary.py --sprint-number <N> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD>
+   ```
+4. **Present results** — Tell the user the file name and location of the generated Excel report, and show key metrics from the JSON output.
+
+The script generates `Sprint_{N}_Summary.xlsx` with two tabs:
+
+- **Sprint Task Summary** — Breaks down tasks by type (Carryover, Planned, Unplanned) with counts and percentages for Completed, Incomplete, On Staging, and Ready for Production statuses. Also shows estimated vs. logged hours for completed tasks.
+- **Sprint Time Summary** — Per-person time breakdown for Rodolfo Ortiz, Ulises Becerra, and Fernando Mendez showing Total, Billable, Non-Billable, Planned, Unplanned, and Other hours.
+
+**Task categorization logic:**
+- **Carryover**: Has current sprint tag AND previous sprint tag, does NOT have "unplanned" tag
+- **Planned**: Has current sprint tag only, NOT previous sprint tag, NOT "unplanned" tag
+- **Unplanned**: Has current sprint tag AND has "unplanned" tag (case-insensitive)
+
+**Non-billable classification:** A time entry is non-billable if the task name, task list name, or project name contains "Non-Billable", OR if the project name starts with "URI-".
+
+If the script exits with code 2, prompt for credentials and retry. If it reports an error finding the sprint tag, show the available tags and ask the user to clarify.
+
+### 5. Ad-Hoc Questions
 
 The team will also ask things like:
 - "Who has the most tasks right now?" → Query tasks grouped by assignee

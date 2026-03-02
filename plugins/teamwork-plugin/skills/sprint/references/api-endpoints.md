@@ -21,7 +21,8 @@ All responses return JSON. Pagination uses `?page=N&pageSize=50` (default 50 ite
 5. [Time Entries](#time-entries)
 6. [People](#people)
 7. [Milestones](#milestones)
-8. [Common Query Parameters](#common-query-parameters)
+8. [Boards](#boards)
+9. [Common Query Parameters](#common-query-parameters)
 
 ---
 
@@ -351,6 +352,78 @@ GET /projects/{projectId}/updates.json  — Updates for a specific project
 ## Workload
 
 The API includes a Workload section for capacity planning. Check available endpoints at your Teamwork instance.
+
+---
+
+## Boards
+
+Boards provide a Kanban-style workflow view for tasks. Each project can have board columns representing workflow stages (e.g., "To Do", "In Progress", "On Staging", "Ready for Production", "On Production", "Done"). Tasks appear as cards within columns.
+
+### List board columns for a project
+```
+GET /projects/{projectId}/boards/columns.json
+```
+
+**Query parameters:**
+
+| Parameter | Description | Example |
+|---|---|---|
+| `page` | Page number (1-based) | `page=1` |
+| `pageSize` | Items per page | `pageSize=50` |
+| `getStats` | Include card count stats per column | `getStats=true` |
+
+Returns: `{ "columns": [...] }`
+
+Key fields per column:
+- `id` — Column ID
+- `name` — Column display name (e.g., "On Staging", "Done")
+- `color` — Hex color string
+- `displayOrder` — Sort order (integer)
+- `projectId` — Parent project ID
+- `stats` — Object with `total` card count (when `getStats=true`)
+
+### Get a single board column
+```
+GET /boards/columns/{columnId}.json
+```
+
+### List cards in a column
+```
+GET /boards/columns/{columnId}/cards.json
+```
+
+Returns: `{ "cards": [...] }`
+
+Key fields per card:
+- `id` — Card ID
+- `taskId` — The Teamwork task ID this card represents
+- `columnId` — Which column the card is in
+- `name` — Card/task name
+- `status` — Card status
+- `taskStatus` — The underlying task's status
+- `displayOrder` — Sort order within the column
+
+### Move a card between columns
+```
+PUT /boards/columns/cards/{cardId}/move.json
+Content-Type: application/json
+
+{
+  "card": {
+    "columnId": {targetColumnId}
+  }
+}
+```
+
+### Determining a task's board status
+
+To find which board column a task is in:
+1. Identify the task's `projectId`
+2. Fetch columns: `GET /projects/{projectId}/boards/columns.json?getStats=true`
+3. For each column with cards (`stats.total > 0`), fetch cards: `GET /boards/columns/{columnId}/cards.json`
+4. Match `card.taskId` to your task's `id`
+
+The helper function `tw_api.get_board_status_for_tasks(tasks)` automates this pattern — it groups tasks by project, fetches columns and cards, and returns a `{task_id: column_name}` mapping.
 
 ---
 

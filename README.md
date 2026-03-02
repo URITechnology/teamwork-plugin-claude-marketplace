@@ -30,22 +30,48 @@ When you start a session that involves sprint management, Claude will activate t
 
 ## For Admins
 
+### Organization-level managed settings
+
+Add this to your Claude managed settings (Admin Settings > Claude Code) to make the marketplace available to all org members:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "uri-technology-tools": {
+      "source": {
+        "source": "github",
+        "repo": "URITechnology/teamwork-plugin-claude-marketplace"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "teamwork-sprint-manager@uri-technology-tools": true
+  }
+}
+```
+
 ### Updating the plugin
 
-1. Make your changes to the skill source files
-2. Repackage using the skill packager to create a new `.skill` file
-3. Replace the `.skill` file in `plugins/`
-4. Bump the `version` in `marketplace.json`
-5. Commit and push — team members will get the update automatically
+1. Make your changes to the skill files in `plugins/teamwork-sprint-manager/skills/sprint/`
+2. Bump the `version` in both `.claude-plugin/marketplace.json` and `plugins/teamwork-sprint-manager/.claude-plugin/plugin.json`
+3. Commit and push — team members will get the update automatically
 
 ### Repo structure
 
 ```
 teamwork-plugin-claude-marketplace/
-├── marketplace.json                        # Marketplace manifest
-├── README.md                               # This file
+├── .claude-plugin/
+│   └── marketplace.json                          # Marketplace manifest (MUST be here)
+├── README.md
 └── plugins/
-    └── teamwork-sprint-manager.skill       # The packaged plugin
+    └── teamwork-sprint-manager/
+        ├── .claude-plugin/
+        │   └── plugin.json                       # Plugin manifest
+        └── skills/
+            └── sprint/
+                ├── SKILL.md                      # Main skill instructions
+                ├── scripts/                      # Helper scripts
+                └── references/                   # API documentation
 ```
 
 ## Security

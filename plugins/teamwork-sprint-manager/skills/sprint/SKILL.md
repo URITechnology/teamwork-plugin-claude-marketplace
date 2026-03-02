@@ -33,7 +33,7 @@ export TEAMWORK_PASSWORD="the-password-they-gave-you"
 - If a script exits with code 2, it means credentials are missing — prompt the user and retry.
 - If you get a 401 error, tell the user their credentials were rejected and ask them to re-enter.
 
-All API calls use Basic Authentication with the username and password. The helper scripts in `scripts/` handle this automatically.
+All API calls use Basic Authentication with the username and password. The helper scripts in `${CLAUDE_PLUGIN_ROOT}/scripts/` handle this automatically.
 
 ## API Basics
 
@@ -47,7 +47,7 @@ Authentication header for curl:
 curl -s -u "${TEAMWORK_USERNAME}:${TEAMWORK_PASSWORD}" "https://${TEAMWORK_SITE}/projects/api/v3/tasks.json"
 ```
 
-For complete endpoint documentation, see `references/api-endpoints.md`. The most commonly used endpoints are:
+For complete endpoint documentation, see `references/api-endpoints.md` (located alongside this skill file). The most commonly used endpoints are:
 
 | What you need | Endpoint |
 |---|---|
@@ -78,7 +78,7 @@ When someone asks "What's the status of the current sprint?" or "Show me where w
 
 Use the helper script for a quick overview:
 ```bash
-python3 scripts/sprint_overview.py --sprint-tag "Sprint-25"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sprint_overview.py" --sprint-tag "Sprint-25"
 ```
 
 Present the results as a clear summary — not a raw data dump. The user wants to know: are we on track? What needs attention? Who might be overloaded?
@@ -94,7 +94,7 @@ When someone asks "How accurate were our estimates?" or "Where did we go over?":
 
 Use the helper script:
 ```bash
-python3 scripts/time_analysis.py --sprint-tag "Sprint-25"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/time_analysis.py" --sprint-tag "Sprint-25"
 ```
 
 The goal is to help the team calibrate future estimates. Be specific: "Backend API tasks averaged 40% over estimate, while frontend tasks were within 10%" is more useful than "some tasks went over."
@@ -110,7 +110,7 @@ When someone asks "Help us plan the next sprint" or "What's our velocity?":
 
 Use the helper script:
 ```bash
-python3 scripts/velocity_report.py --last-n-sprints 5
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/velocity_report.py" --last-n-sprints 5
 ```
 
 Be honest about uncertainty. If the team's velocity has high variance, say so — "Your velocity ranges from 80 to 140 hours per sprint, so I'd plan conservatively around 90-100 hours."

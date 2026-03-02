@@ -52,8 +52,8 @@ Add this to your Claude managed settings (Admin Settings > Claude Code) to make 
 
 ### Updating the plugin
 
-1. Make your changes to the skill files in `plugins/teamwork-sprint-manager/skills/sprint/`
-2. Bump the `version` in both `.claude-plugin/marketplace.json` and `plugins/teamwork-sprint-manager/.claude-plugin/plugin.json`
+1. Make your changes to files in `plugins/teamwork-sprint-manager/`
+2. Bump the `version` in `plugins/teamwork-sprint-manager/.claude-plugin/plugin.json`
 3. Commit and push — team members will get the update automatically
 
 ### Repo structure
@@ -61,17 +61,21 @@ Add this to your Claude managed settings (Admin Settings > Claude Code) to make 
 ```
 teamwork-plugin-claude-marketplace/
 ├── .claude-plugin/
-│   └── marketplace.json                          # Marketplace manifest (MUST be here)
+│   └── marketplace.json                          # Marketplace manifest
 ├── README.md
 └── plugins/
-    └── teamwork-sprint-manager/
+    └── teamwork-sprint-manager/                  # Plugin root
         ├── .claude-plugin/
         │   └── plugin.json                       # Plugin manifest
-        └── skills/
-            └── sprint/
-                ├── SKILL.md                      # Main skill instructions
-                ├── scripts/                      # Helper scripts
-                └── references/                   # API documentation
+        ├── skills/
+        │   └── sprint/
+        │       ├── SKILL.md                      # Main skill instructions
+        │       └── references/                   # API documentation
+        └── scripts/                              # Helper scripts (at plugin root)
+            ├── tw_api.py
+            ├── sprint_overview.py
+            ├── time_analysis.py
+            └── velocity_report.py
 ```
 
 ## Security

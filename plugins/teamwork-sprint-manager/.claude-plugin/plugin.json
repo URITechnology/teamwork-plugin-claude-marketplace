@@ -3,6 +3,9 @@
   "description": "Sprint management for Teamwork Projects — track task status, compare estimates vs. actuals, analyze velocity, and plan future sprints. Connects to urimarketing.teamwork.com via the Teamwork API.",
   "version": "1.0.0",
   "author": {
-    "name": "URI Technology"
-  }
+    "name": "URI Technology",
+    "email": "thughes@urimarketing.com"
+  },
+  "repository": "https://github.com/URITechnology/teamwork-plugin-claude-marketplace",
+  "keywords": ["teamwork", "sprint", "project-management", "velocity", "time-tracking"]
 }

@@ -60,7 +60,7 @@ def clear_config_cache():
     _cached_config = None
 
 
-def make_request(endpoint, params=None, method="GET", body=None, max_retries=3):
+def make_request(endpoint, params=None, method="GET", body=None, max_retries=3, api_version="v3"):
     """
     Make an authenticated request to the Teamwork API.
 
@@ -70,6 +70,7 @@ def make_request(endpoint, params=None, method="GET", body=None, max_retries=3):
         method: HTTP method
         body: dict to send as JSON body (for POST/PUT)
         max_retries: number of retries on rate limit
+        api_version: API version to use ('v2' or 'v3', default 'v3')
 
     Returns:
         Parsed JSON response
@@ -77,7 +78,7 @@ def make_request(endpoint, params=None, method="GET", body=None, max_retries=3):
     global _last_request_time, _request_count
 
     config = get_config()
-    base_url = f"https://{config['site']}/projects/api/v3"
+    base_url = f"https://{config['site']}/projects/api/{api_version}"
 
     url = f"{base_url}{endpoint}"
 
@@ -150,7 +151,7 @@ def get_request_count():
     return _request_count
 
 
-def fetch_all_pages(endpoint, params=None, result_key=None, page_size=500):
+def fetch_all_pages(endpoint, params=None, result_key=None, page_size=500, api_version="v3"):
     """
     Fetch all pages of a paginated endpoint.
 
@@ -160,6 +161,7 @@ def fetch_all_pages(endpoint, params=None, result_key=None, page_size=500):
         result_key: the key in the response that holds the array (e.g., 'tasks', 'tags')
                     If None, tries to auto-detect.
         page_size: items per page (max 500)
+        api_version: API version to use ('v2' or 'v3', default 'v3')
 
     Returns:
         List of all items across all pages
@@ -172,7 +174,7 @@ def fetch_all_pages(endpoint, params=None, result_key=None, page_size=500):
     all_items = []
 
     while True:
-        response = make_request(endpoint, params)
+        response = make_request(endpoint, params, api_version=api_version)
         if response is None:
             break
 
@@ -355,26 +357,42 @@ def get_time_entries_by_date_range(from_date, to_date, user_id=None, user_ids=No
     """
     Fetch time entries for a date range, optionally filtered by user(s).
 
+    Uses the v2 API which correctly supports fromDate/toDate and userId
+    filtering. The v3 API silently ignores these parameters.
+
+    Note: v2 returns hours/minutes as separate fields (e.g., 2h30m =
+    hours:2, minutes:30). This function normalizes each entry by setting
+    'minutes' to the total minutes so callers can use entry['minutes']
+    consistently (matching v3 behavior).
+
     Args:
-        from_date: start date string (YYYY-MM-DD)
-        to_date: end date string (YYYY-MM-DD)
+        from_date: start date string (YYYY-MM-DD or YYYYMMDD)
+        to_date: end date string (YYYY-MM-DD or YYYYMMDD)
         user_id: optional single Teamwork user ID to filter by
         user_ids: optional list of Teamwork user IDs (comma-separated in request)
 
     Returns:
-        List of time entry dicts
+        List of time entry dicts (with 'minutes' normalized to total minutes)
     """
-    # Teamwork v3 uses startDate/endDate (YYYY-MM-DD format).
-    # NOTE: fromDate/toDate and userId are silently ignored by v3.
+    # Use v2 API — the v3 endpoint silently ignores fromDate/toDate/userId.
     params = {
-        "startDate": from_date if "-" in from_date else f"{from_date[:4]}-{from_date[4:6]}-{from_date[6:]}",
-        "endDate": to_date if "-" in to_date else f"{to_date[:4]}-{to_date[4:6]}-{to_date[6:]}",
+        "fromDate": from_date.replace("-", ""),
+        "toDate": to_date.replace("-", ""),
     }
     if user_ids:
-        params["assignedToUserIds"] = ",".join(str(uid) for uid in user_ids)
+        params["userId"] = ",".join(str(uid) for uid in user_ids)
     elif user_id:
-        params["assignedToUserIds"] = str(user_id)
-    return fetch_all_pages("/time.json", params, result_key="timelogs")
+        params["userId"] = str(user_id)
+    entries = fetch_all_pages("/time.json", params, result_key="timeEntries", api_version="v2")
+
+    # Normalize v2 time fields: v2 splits into hours + minutes remainder,
+    # but callers expect 'minutes' to be the total (as v3 returns).
+    for entry in entries:
+        hours = entry.get("hours", 0) or 0
+        mins = entry.get("minutes", 0) or 0
+        entry["minutes"] = hours * 60 + mins
+
+    return entries
 
 
 def get_task_by_id(task_id):

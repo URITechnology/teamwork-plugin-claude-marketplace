@@ -201,9 +201,9 @@ GET /projects/{projectId}/time.json
 
 | Parameter | Description | Example |
 |---|---|---|
-| `fromDate` | Start of date range (YYYY-MM-DD) | `fromDate=2026-01-01` |
-| `toDate` | End of date range (YYYY-MM-DD) | `toDate=2026-01-31` |
-| `userId` | Filter by person | `userId=67890` |
+| `fromDate` | Start of date range (YYYYMMDD) | `fromDate=20260101` |
+| `toDate` | End of date range (YYYYMMDD) | `toDate=20260131` |
+| `userId` | Filter by person (comma-separated for multiple) | `userId=384930,381144,383404` |
 | `projectId` | Filter by project | `projectId=111` |
 | `taskId` | Filter by task | `taskId=222` |
 
@@ -352,6 +352,75 @@ GET /projects/{projectId}/updates.json  — Updates for a specific project
 ## Workload
 
 The API includes a Workload section for capacity planning. Check available endpoints at your Teamwork instance.
+
+---
+
+## Workflows
+
+Workflows provide a cross-project Kanban-style view for tasks organized into stages. The workflows endpoint is highly efficient because it supports **sideloading** related data (projects, tasklists, tags, users, timeTotals) in a single response.
+
+### Get workflow details
+```
+GET /workflows/{workflowId}.json
+```
+Returns workflow metadata including stages.
+
+### List tasks in a workflow stage
+```
+GET /workflows/{workflowId}/stages/{stageId}/tasks.json
+```
+
+**Key query parameters:**
+
+| Parameter | Description | Example |
+|---|---|---|
+| `tagIds` | Filter by tag ID | `tagIds=138509` |
+| `status` | Task status filter | `status=all` |
+| `includeCompletedTasks` | Include completed tasks | `includeCompletedTasks=true` |
+| `include` | Sideload related data | `include=users,timeTotals,projects,tasklists,tags,parentTasks,subtaskStats` |
+| `fields[projects]` | Sparse fieldset for projects | `fields[projects]=id,name,companyId,status,type` |
+| `fields[tasklists]` | Sparse fieldset for tasklists | `fields[tasklists]=id,projectId,name` |
+| `pageSize` | Items per page (max 500) | `pageSize=500` |
+
+**Response format:**
+
+The response includes a `tasks` array and an `included` section with sideloaded data:
+
+```json
+{
+  "tasks": [
+    {
+      "id": 42774623,
+      "name": "Task Name",
+      "status": "new",
+      "estimateMinutes": 270,
+      "tagIds": [136610, 138509],
+      "tags": [{"id": 136610, "type": "tags"}, ...],
+      "assigneeUserIds": [381144],
+      "tasklistId": 3272209,
+      "parentTaskId": 42508880,
+      "workflowStages": [{"workflowId": 78859, "stageId": 452716, "stageTaskDisplayOrder": 1924.25}]
+    }
+  ],
+  "included": {
+    "timeTotals": {
+      "42774623": {"loggedMinutes": 645, "billedloggedMinutes": 345, "billableLoggedMinutes": 645}
+    },
+    "projects": {"740934": {"id": 740934, "name": "Project Name", ...}},
+    "tasklists": {"3272209": {"id": 3272209, "name": "Tasklist Name", "projectId": 740934}},
+    "tags": {"136610": {"id": 136610, "name": "PMD", "color": "#2f8de4"}},
+    "users": {"381144": {"id": 381144, "firstName": "Rodolfo", "lastName": "Ortiz", ...}}
+  }
+}
+```
+
+**Key notes:**
+- `tagIds` on tasks is a flat `[int]` array; `tags` are type references (`{"id": N, "type": "tags"}`)
+- Full tag data (with names) is in `included.tags`
+- `timeTotals` is keyed by task ID string: `{"42774623": {"loggedMinutes": 645, ...}}`
+- `estimateMinutes` (not `estimatedMinutes`) is the field name in workflow responses
+- `workflowStages` on each task identifies which stage (board column) it belongs to
+- This endpoint is used by the sprint summary script to replace multiple individual API calls
 
 ---
 

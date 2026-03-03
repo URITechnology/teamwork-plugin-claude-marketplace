@@ -7,20 +7,23 @@ Usage:
 
 Requires: TEAMWORK_SITE and TEAMWORK_USERNAME/PASSWORD environment variables.
 Requires: openpyxl (pip install openpyxl)
+
+Optimized to use the Teamwork workflows endpoint with sideloaded data
+(timeTotals, projects, tasklists, tags, users) to minimize API calls.
+Typically completes in ~12-26 API calls instead of ~100-170.
 """
 
 import argparse
 import json
 import sys
 import os
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tw_api
 
 try:
     from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side, numbers
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 except ImportError:
     print("ERROR: openpyxl is required. Install with: pip install openpyxl", file=sys.stderr)
     sys.exit(1)
@@ -80,14 +83,18 @@ def find_current_and_previous_tags(sprint_number):
     return current_tag, previous_tag
 
 
-def categorize_tasks(tasks, current_tag_id, previous_tag_id):
+def categorize_tasks(tasks, current_tag_id, previous_tag_id, tag_map=None):
     """
     Categorize sprint tasks into Carryover, Planned, and Unplanned.
 
+    Supports both regular task format (tags as objects with name/id) and
+    workflows format (tagIds as flat int array + sideloaded tag_map).
+
     Args:
-        tasks: list of task dicts (with tags sideloaded)
+        tasks: list of task dicts
         current_tag_id: ID of the current sprint tag
         previous_tag_id: ID of the previous sprint tag (may be None)
+        tag_map: optional {tag_id: {id, name, ...}} from workflows sideloaded data
 
     Returns:
         dict with keys 'Carryover', 'Planned', 'Unplanned' mapping to lists
@@ -95,11 +102,33 @@ def categorize_tasks(tasks, current_tag_id, previous_tag_id):
     categories = {"Carryover": [], "Planned": [], "Unplanned": []}
 
     for task in tasks:
-        tag_names = [t.get("name", "").lower() for t in task.get("tags", [])]
-        tag_ids = [t.get("id") for t in task.get("tags", [])]
+        # Get tag IDs and names — handle both response formats
+        task_tag_ids = task.get("tagIds") or []
+        tag_objects = task.get("tags") or []
+
+        if task_tag_ids:
+            # Workflows format (or any format with tagIds): flat [int] array
+            tag_ids = [int(tid) for tid in task_tag_ids]
+            if tag_map:
+                tag_names = []
+                for tid in tag_ids:
+                    tag_info = tag_map.get(int(tid), {})
+                    name = tag_info.get("name", "") if isinstance(tag_info, dict) else ""
+                    tag_names.append(name.lower())
+            else:
+                # No tag_map available — IDs still work for carryover detection
+                tag_names = []
+        elif tag_objects:
+            # Regular format: tags are [{id, name, ...}] objects
+            tag_names = [t.get("name", "").lower() for t in tag_objects if isinstance(t, dict)]
+            tag_ids = [int(t.get("id", 0)) for t in tag_objects if isinstance(t, dict)]
+        else:
+            tag_names = []
+            tag_ids = []
 
         has_unplanned = any("unplanned" in n for n in tag_names)
-        has_previous = previous_tag_id is not None and int(previous_tag_id) in [int(x) for x in tag_ids]
+        has_previous = (previous_tag_id is not None and
+                        int(previous_tag_id) in tag_ids)
 
         if has_unplanned:
             categories["Unplanned"].append(task)
@@ -117,7 +146,7 @@ def classify_task_status(task, board_status_map):
 
     Args:
         task: task dict
-        board_status_map: dict {task_id: column_name}
+        board_status_map: dict {task_id: column_name/stage_name}
 
     Returns:
         One of: 'Complete', 'Incomplete', 'On Staging', 'Ready for Production'
@@ -142,9 +171,18 @@ def classify_task_status(task, board_status_map):
     return "Incomplete"
 
 
-def build_task_summary_rows(sprint_number, categories, board_status_map, time_entries_map):
+def build_task_summary_rows(sprint_number, categories, board_status_map, time_totals_map):
     """
     Build the data rows for Tab 1.
+
+    Uses timeTotals from the workflows endpoint for logged hours (includes
+    ALL users' time on each task, not filtered).
+
+    Args:
+        sprint_number: int
+        categories: dict from categorize_tasks()
+        board_status_map: {task_id: stage_name}
+        time_totals_map: {task_id: {loggedMinutes: N, ...}} from workflows sideloaded data
 
     Returns:
         list of dicts, one per task type, plus a totals row
@@ -175,10 +213,14 @@ def build_task_summary_rows(sprint_number, categories, board_status_map, time_en
         estimated_mins = 0
         logged_mins = 0
         for task in completed:
-            estimated_mins += task.get("estimatedMinutes", 0) or 0
-            task_id = task.get("id")
-            entries = time_entries_map.get(int(task_id), [])
-            logged_mins += sum(e.get("minutes", 0) or 0 for e in entries)
+            # Handle both field names: estimateMinutes (workflows) vs estimatedMinutes (regular)
+            estimated_mins += (task.get("estimateMinutes")
+                               or task.get("estimatedMinutes")
+                               or 0)
+            task_id = int(task.get("id", 0))
+            # Use timeTotals for logged time (includes ALL users)
+            totals = time_totals_map.get(task_id, {})
+            logged_mins += totals.get("loggedMinutes", 0) or 0
 
         estimated_hours = round(estimated_mins / 60, 2) if estimated_mins else 0
         logged_hours = round(logged_mins / 60, 2) if logged_mins else 0
@@ -239,28 +281,28 @@ def build_task_summary_rows(sprint_number, categories, board_status_map, time_en
 # Tab 2 helpers
 # ---------------------------------------------------------------------------
 
-def find_person_ids(names):
+def find_person_ids_from_user_map(names, user_map):
     """
-    Look up Teamwork person IDs by full name.
+    Look up Teamwork person IDs by full name using the sideloaded user map.
 
     Args:
         names: list of full name strings
+        user_map: {user_id: {id, firstName, lastName, ...}} from workflows data
 
     Returns:
         dict: {full_name: person_id} (None if not found)
     """
-    people = tw_api.fetch_all_pages("/people.json", result_key="people")
     result = {}
     for name in names:
         parts = name.lower().split()
-        for person in people:
-            first = (person.get("firstName") or "").lower()
-            last = (person.get("lastName") or "").lower()
+        for uid, user in user_map.items():
+            first = (user.get("firstName") or "").lower()
+            last = (user.get("lastName") or "").lower()
             if len(parts) == 2 and first == parts[0] and last == parts[1]:
-                result[name] = person.get("id")
+                result[name] = int(uid)
                 break
         if name not in result:
-            print(f"WARNING: Could not find person '{name}' in Teamwork.", file=sys.stderr)
+            print(f"WARNING: Could not find person '{name}' in sideloaded users.", file=sys.stderr)
             result[name] = None
     return result
 
@@ -290,39 +332,25 @@ def is_non_billable(task_name, tasklist_name, project_name):
     return False
 
 
-def build_time_summary_rows(sprint_number, start_date, end_date, current_tag_id):
+def build_time_summary_rows(sprint_number, current_tag_id, person_ids,
+                            time_entries_by_person, task_map,
+                            project_name_map, tasklist_name_map, tag_name_map):
     """
-    Build the data rows for Tab 2.
+    Build the data rows for Tab 2 using pre-fetched data (ZERO API calls).
+
+    Args:
+        sprint_number: int
+        current_tag_id: ID of the current sprint tag
+        person_ids: {full_name: person_id}
+        time_entries_by_person: {user_id: [time_entry_dicts]}
+        task_map: {task_id: task_dict} (sprint + non-sprint tasks)
+        project_name_map: {project_id: project_name}
+        tasklist_name_map: {tasklist_id: tasklist_name}
+        tag_name_map: {tag_id: tag_name}
 
     Returns:
         list of dicts, one per person
     """
-    person_ids = find_person_ids(TIME_SUMMARY_PEOPLE)
-
-    # Caches for task, project, and task list lookups
-    task_cache = {}
-    project_cache = {}
-    tasklist_cache = {}
-
-    def get_task_details(task_id):
-        if task_id not in task_cache:
-            task_cache[task_id] = tw_api.get_task_by_id(task_id)
-            if len(task_cache) > 5 and len(task_cache) % 10 == 0:
-                time.sleep(0.2)
-        return task_cache[task_id]
-
-    def get_project_name(project_id):
-        if project_id not in project_cache:
-            proj = tw_api.get_project_by_id(project_id)
-            project_cache[project_id] = proj.get("name", "") if proj else ""
-        return project_cache[project_id]
-
-    def get_tasklist_name(tasklist_id):
-        if tasklist_id not in tasklist_cache:
-            tl = tw_api.get_tasklist_by_id(tasklist_id)
-            tasklist_cache[tasklist_id] = tl.get("name", "") if tl else ""
-        return tasklist_cache[tasklist_id]
-
     rows = []
 
     for person_name in TIME_SUMMARY_PEOPLE:
@@ -340,8 +368,7 @@ def build_time_summary_rows(sprint_number, start_date, end_date, current_tag_id)
             })
             continue
 
-        # Fetch all time entries for this person in the sprint date range
-        entries = tw_api.get_time_entries_by_date_range(start_date, end_date, user_id=person_id)
+        entries = time_entries_by_person.get(int(person_id), [])
 
         total_mins = 0
         billable_mins = 0
@@ -359,23 +386,33 @@ def build_time_summary_rows(sprint_number, start_date, end_date, current_tag_id)
             task_name = ""
             tasklist_name = ""
             project_name = ""
-            task_tags = []
+            task_tag_ids = []
 
-            # Look up task details if we have a task ID
+            # Look up task details from pre-fetched map (no API call)
             if task_id:
-                task_detail = get_task_details(int(task_id))
+                task_id = int(task_id)
+                task_detail = task_map.get(task_id)
                 if task_detail:
                     task_name = task_detail.get("name", "")
-                    task_tags = task_detail.get("tags", [])
-                    tl_id = task_detail.get("taskListId") or task_detail.get("todoListId")
+                    # Get tag IDs — handle both formats
+                    task_tag_ids = task_detail.get("tagIds") or []
+                    if not task_tag_ids:
+                        # Fall back to extracting IDs from tag objects
+                        tag_objs = task_detail.get("tags") or []
+                        task_tag_ids = [int(t.get("id", 0)) for t in tag_objs
+                                        if isinstance(t, dict) and t.get("id")]
+                    # Get tasklist name from pre-fetched map
+                    tl_id = (task_detail.get("tasklistId")
+                             or task_detail.get("taskListId")
+                             or task_detail.get("todoListId"))
                     if tl_id:
-                        tasklist_name = get_tasklist_name(int(tl_id))
+                        tasklist_name = tasklist_name_map.get(int(tl_id), "")
                     if not project_id:
                         project_id = task_detail.get("projectId")
 
-            # Look up project name
+            # Look up project name from pre-fetched map (no API call)
             if project_id:
-                project_name = get_project_name(int(project_id))
+                project_name = project_name_map.get(int(project_id), "")
 
             # Classify billable vs non-billable
             if is_non_billable(task_name, tasklist_name, project_name):
@@ -384,8 +421,11 @@ def build_time_summary_rows(sprint_number, start_date, end_date, current_tag_id)
                 billable_mins += mins
 
             # Classify planned vs unplanned vs other
-            tag_ids = [int(t.get("id", 0)) for t in task_tags]
-            tag_names = [t.get("name", "").lower() for t in task_tags]
+            tag_ids = [int(tid) for tid in task_tag_ids]
+            tag_names = []
+            for tid in tag_ids:
+                name = tag_name_map.get(int(tid), "")
+                tag_names.append(name.lower())
 
             has_current_sprint = int(current_tag_id) in tag_ids if current_tag_id else False
             has_unplanned = any("unplanned" in n for n in tag_names)
@@ -577,13 +617,27 @@ def create_workbook(task_rows, time_rows, sprint_number):
 def sprint_summary(sprint_number, start_date, end_date):
     """
     Generate the full sprint summary Excel report.
+
+    Optimized flow:
+      1. Find sprint tags
+      2. Fetch all workflow tasks with sideloaded data (timeTotals, projects,
+         tasklists, tags, users) — replaces separate task, board, project,
+         tasklist, and people lookups.
+      3. Resolve person IDs from sideloaded users
+      4. Fetch time entries for team members (1 call with comma-separated userIds)
+      5. Batch fetch non-sprint task details (only tasks the 3 users logged time on)
+      6. Process everything in memory, generate Excel report
     """
     print(f"Generating Sprint {sprint_number} summary ({start_date} to {end_date})...", file=sys.stderr)
 
+    # ==================================================================
+    # Phase 1: Data Collection
+    # ==================================================================
+
     # ------------------------------------------------------------------
-    # Step 1: Find sprint tags
+    # Step 1: Find sprint tags (1 API call)
     # ------------------------------------------------------------------
-    print("  Finding sprint tags...", file=sys.stderr)
+    print("  [1/6] Finding sprint tags...", file=sys.stderr)
     current_tag, previous_tag = find_current_and_previous_tags(sprint_number)
 
     if current_tag is None:
@@ -604,55 +658,163 @@ def sprint_summary(sprint_number, start_date, end_date):
               f"Carryover detection will be skipped.", file=sys.stderr)
 
     # ------------------------------------------------------------------
-    # Step 2: Fetch and categorize tasks
+    # Step 2: Fetch all workflow tasks with sideloaded data (~5-7 API calls)
     # ------------------------------------------------------------------
-    print("  Fetching sprint tasks...", file=sys.stderr)
-    tasks = tw_api.get_tasks_for_tag(current_tag_id)
+    print("  [2/6] Fetching workflow tasks with sideloaded data...", file=sys.stderr)
+    (tasks, time_totals_map, project_map, tasklist_map,
+     tag_map, user_map, board_status_map) = tw_api.get_all_workflow_tasks(
+        tag_id=current_tag_id
+    )
     print(f"  Found {len(tasks)} tasks in sprint.", file=sys.stderr)
 
-    categories = categorize_tasks(tasks, current_tag_id, previous_tag_id)
+    # ------------------------------------------------------------------
+    # Step 3: Resolve person IDs from sideloaded users (ZERO API calls)
+    # ------------------------------------------------------------------
+    print("  [3/6] Resolving person IDs from sideloaded users...", file=sys.stderr)
+    person_ids = find_person_ids_from_user_map(TIME_SUMMARY_PEOPLE, user_map)
+
+    # If any person wasn't found in sideloaded users, try a direct people API call
+    missing_people = [name for name, pid in person_ids.items() if pid is None]
+    if missing_people:
+        print(f"  Falling back to people API for: {missing_people}", file=sys.stderr)
+        people = tw_api.fetch_all_pages("/people.json", result_key="people")
+        for name in missing_people:
+            parts = name.lower().split()
+            for person in people:
+                first = (person.get("firstName") or "").lower()
+                last = (person.get("lastName") or "").lower()
+                if len(parts) == 2 and first == parts[0] and last == parts[1]:
+                    person_ids[name] = int(person.get("id"))
+                    break
+
+    # ------------------------------------------------------------------
+    # Step 4: Fetch time entries for team members (1 API call, user-filtered)
+    # ------------------------------------------------------------------
+    print("  [4/6] Fetching time entries for team members...", file=sys.stderr)
+    valid_person_ids = [pid for pid in person_ids.values() if pid is not None]
+    all_person_entries = tw_api.get_time_entries_by_date_range(
+        start_date, end_date, user_ids=valid_person_ids
+    )
+    print(f"  Found {len(all_person_entries)} time entries for {len(valid_person_ids)} team members.", file=sys.stderr)
+
+    # Group time entries by person_id
+    time_entries_by_person = {}
+    for entry in all_person_entries:
+        uid = entry.get("userId") or entry.get("user-id")
+        if uid:
+            uid = int(uid)
+            time_entries_by_person.setdefault(uid, []).append(entry)
+
+    for name, pid in person_ids.items():
+        if pid:
+            count = len(time_entries_by_person.get(int(pid), []))
+            print(f"    {name}: {count} time entries", file=sys.stderr)
+
+    # ------------------------------------------------------------------
+    # Step 5: Batch fetch non-sprint task details (small set, not 3,400)
+    # ------------------------------------------------------------------
+    # Build sprint task lookup
+    sprint_task_map = {int(t["id"]): t for t in tasks}
+
+    # Find tasks referenced in the 3 users' time entries that are NOT in the sprint set
+    referenced_task_ids = set()
+    for entries in time_entries_by_person.values():
+        for entry in entries:
+            tid = entry.get("taskId") or entry.get("task-id") or entry.get("todoItemId")
+            if tid:
+                referenced_task_ids.add(int(tid))
+
+    missing_task_ids = referenced_task_ids - set(sprint_task_map.keys())
+    if missing_task_ids:
+        print(f"  [5/6] Fetching details for {len(missing_task_ids)} non-sprint tasks...", file=sys.stderr)
+        extra_tasks = tw_api.get_tasks_batch(list(missing_task_ids))
+        sprint_task_map.update(extra_tasks)
+
+        # Extract project/tasklist info from extra tasks
+        for task in extra_tasks.values():
+            pid = task.get("projectId")
+            if pid and int(pid) not in project_map:
+                # We need the project name for billable classification
+                proj = tw_api.get_project_by_id(pid)
+                if proj:
+                    project_map[int(pid)] = {"id": int(pid), "name": proj.get("name", "")}
+
+            tl_id = task.get("tasklistId") or task.get("taskListId") or task.get("todoListId")
+            if tl_id and int(tl_id) not in tasklist_map:
+                tl = tw_api.get_tasklist_by_id(tl_id)
+                if tl:
+                    tasklist_map[int(tl_id)] = {"id": int(tl_id), "name": tl.get("name", "")}
+
+            # Extract tag info from extra tasks
+            tag_objs = task.get("tags") or []
+            for tag_obj in tag_objs:
+                if isinstance(tag_obj, dict) and tag_obj.get("id"):
+                    tid = int(tag_obj["id"])
+                    if tid not in tag_map:
+                        tag_map[tid] = tag_obj
+    else:
+        print("  [5/6] No non-sprint tasks to fetch.", file=sys.stderr)
+
+    # ==================================================================
+    # Phase 2: Build Lookup Maps (ZERO API calls)
+    # ==================================================================
+    print("  [6/6] Building report...", file=sys.stderr)
+
+    # Build project name map (flat: project_id -> name)
+    project_name_map = {}
+    for pid, proj in project_map.items():
+        if isinstance(proj, dict):
+            project_name_map[int(pid)] = proj.get("name", "")
+        else:
+            project_name_map[int(pid)] = str(proj)
+
+    # Build tasklist name map (flat: tasklist_id -> name)
+    tasklist_name_map = {}
+    for tlid, tl in tasklist_map.items():
+        if isinstance(tl, dict):
+            tasklist_name_map[int(tlid)] = tl.get("name", "")
+        else:
+            tasklist_name_map[int(tlid)] = str(tl)
+
+    # Build tag name map (flat: tag_id -> name)
+    tag_name_map = {}
+    for tagid, tag in tag_map.items():
+        if isinstance(tag, dict):
+            tag_name_map[int(tagid)] = tag.get("name", "")
+        else:
+            tag_name_map[int(tagid)] = str(tag)
+
+    # ==================================================================
+    # Phase 3: In-Memory Processing
+    # ==================================================================
+
+    # Categorize tasks
+    categories = categorize_tasks(tasks, current_tag_id, previous_tag_id, tag_map=tag_map)
     for cat, cat_tasks in categories.items():
         print(f"    {cat}: {len(cat_tasks)} tasks", file=sys.stderr)
 
-    # ------------------------------------------------------------------
-    # Step 3: Get board status for all tasks
-    # ------------------------------------------------------------------
-    print("  Fetching board status for tasks...", file=sys.stderr)
-    board_status_map = tw_api.get_board_status_for_tasks(tasks)
-    print(f"  Board status found for {len(board_status_map)} of {len(tasks)} tasks.", file=sys.stderr)
+    # Build Tab 1 rows using timeTotals
+    task_rows = build_task_summary_rows(sprint_number, categories, board_status_map, time_totals_map)
 
-    # ------------------------------------------------------------------
-    # Step 4: Get time entries for completed tasks (Tab 1)
-    # ------------------------------------------------------------------
-    print("  Fetching time entries for completed tasks...", file=sys.stderr)
-    completed_task_ids = []
-    for cat_tasks in categories.values():
-        for task in cat_tasks:
-            if classify_task_status(task, board_status_map) == "Complete":
-                completed_task_ids.append(task.get("id"))
+    # Build Tab 2 rows using pre-fetched data
+    time_rows = build_time_summary_rows(
+        sprint_number, current_tag_id, person_ids,
+        time_entries_by_person, sprint_task_map,
+        project_name_map, tasklist_name_map, tag_name_map
+    )
 
-    time_entries_map = tw_api.get_time_entries_for_tasks(completed_task_ids)
-
-    # ------------------------------------------------------------------
-    # Step 5: Build Tab 1 rows
-    # ------------------------------------------------------------------
-    print("  Building task summary...", file=sys.stderr)
-    task_rows = build_task_summary_rows(sprint_number, categories, board_status_map, time_entries_map)
-
-    # ------------------------------------------------------------------
-    # Step 6: Build Tab 2 rows
-    # ------------------------------------------------------------------
-    print("  Building time summary...", file=sys.stderr)
-    time_rows = build_time_summary_rows(sprint_number, start_date, end_date, current_tag_id)
-
-    # ------------------------------------------------------------------
-    # Step 7: Write Excel file
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # Phase 4: Report Generation
+    # ==================================================================
     filename = f"Sprint_{sprint_number}_Summary.xlsx"
     print(f"  Writing Excel file: {filename}", file=sys.stderr)
 
     wb = create_workbook(task_rows, time_rows, sprint_number)
     wb.save(filename)
+
+    # Print API call count for diagnostics
+    print(f"  Total API calls: {tw_api.get_request_count()}", file=sys.stderr)
+    print(f"  Done.", file=sys.stderr)
 
     # Output the filename to stdout for Claude to present to the user
     print(json.dumps({

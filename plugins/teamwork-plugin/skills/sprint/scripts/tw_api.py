@@ -83,7 +83,14 @@ def make_request(endpoint, params=None, method="GET", body=None, max_retries=3):
 
     if params:
         query_string = urllib.parse.urlencode(params, doseq=True)
+        # Ensure commas in parameter values (e.g., userId=1,2,3) are not
+        # URL-encoded, as the Teamwork API expects literal commas for
+        # multi-value filters.
+        query_string = query_string.replace('%2C', ',')
         url = f"{url}?{query_string}"
+
+    if os.environ.get("TW_DEBUG"):
+        print(f"  DEBUG API: {method} {url}", file=sys.stderr)
 
     # Basic auth: username and password
     credentials = base64.b64encode(f"{config['username']}:{config['password']}".encode()).decode()
@@ -349,23 +356,24 @@ def get_time_entries_by_date_range(from_date, to_date, user_id=None, user_ids=No
     Fetch time entries for a date range, optionally filtered by user(s).
 
     Args:
-        from_date: start date string (YYYY-MM-DD or YYYYMMDD)
-        to_date: end date string (YYYY-MM-DD or YYYYMMDD)
+        from_date: start date string (YYYY-MM-DD)
+        to_date: end date string (YYYY-MM-DD)
         user_id: optional single Teamwork user ID to filter by
         user_ids: optional list of Teamwork user IDs (comma-separated in request)
 
     Returns:
         List of time entry dicts
     """
-    # Teamwork expects YYYYMMDD format for date parameters
+    # Teamwork v3 uses startDate/endDate (YYYY-MM-DD format).
+    # NOTE: fromDate/toDate and userId are silently ignored by v3.
     params = {
-        "fromDate": from_date.replace("-", ""),
-        "toDate": to_date.replace("-", ""),
+        "startDate": from_date if "-" in from_date else f"{from_date[:4]}-{from_date[4:6]}-{from_date[6:]}",
+        "endDate": to_date if "-" in to_date else f"{to_date[:4]}-{to_date[4:6]}-{to_date[6:]}",
     }
     if user_ids:
-        params["userId"] = ",".join(str(uid) for uid in user_ids)
+        params["assignedToUserIds"] = ",".join(str(uid) for uid in user_ids)
     elif user_id:
-        params["userId"] = str(user_id)
+        params["assignedToUserIds"] = str(user_id)
     return fetch_all_pages("/time.json", params, result_key="timelogs")
 
 

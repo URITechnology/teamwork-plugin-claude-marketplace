@@ -189,7 +189,7 @@ GET /tasks/{taskId}/time.json
 
 ### List all time entries (with date range)
 ```
-GET /time.json?fromDate=2026-01-01&toDate=2026-01-31
+GET /time.json?startDate=2026-01-01&endDate=2026-01-31
 ```
 
 ### List time entries for a project
@@ -201,11 +201,15 @@ GET /projects/{projectId}/time.json
 
 | Parameter | Description | Example |
 |---|---|---|
-| `fromDate` | Start of date range (YYYYMMDD) | `fromDate=20260101` |
-| `toDate` | End of date range (YYYYMMDD) | `toDate=20260131` |
-| `userId` | Filter by person (comma-separated for multiple) | `userId=384930,381144,383404` |
+| `startDate` | Start of date range (YYYY-MM-DD) | `startDate=2026-01-01` |
+| `endDate` | End of date range (YYYY-MM-DD) | `endDate=2026-01-31` |
+| `assignedToUserIds` | Filter by person (comma-separated for multiple) | `assignedToUserIds=384930,381144,383404` |
 | `projectId` | Filter by project | `projectId=111` |
 | `taskId` | Filter by task | `taskId=222` |
+
+**Important v3 notes:**
+- `fromDate`/`toDate` and `userId` are silently ignored by the v3 API — use `startDate`/`endDate` and `assignedToUserIds` instead.
+- `startDate`/`endDate` use `YYYY-MM-DD` format (not `YYYYMMDD`).
 
 Key fields per time entry:
 - `id`

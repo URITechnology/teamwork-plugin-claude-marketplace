@@ -1,9 +1,6 @@
 ---
 name: sprint
-description: |
-  Sprint management skill for teams using Teamwork Projects. Connects to the Teamwork Projects API to help project managers track sprint tasks, compare time estimates vs. actuals, analyze team velocity, and plan future sprints. Your team uses tags/categories in Teamwork to organize tasks into sprints.
-
-  Use this skill whenever the user mentions: sprints, sprint planning, sprint review, velocity, burndown, task status in Teamwork, time tracking analysis, estimate accuracy, capacity planning, backlog grooming, or any project management question that involves Teamwork Projects data. Also trigger when the user asks about task assignments, who's working on what, blocked tasks, overdue items, or workload distribution - even if they don't explicitly say "Teamwork" - as long as a Teamwork connection has been configured.
+description: "Sprint management skill for Teamwork Projects. Track sprint tasks, compare estimates vs. actuals, analyze velocity, and plan future sprints. Use when the user mentions sprints, sprint planning, velocity, burndown, task status, time tracking, estimate accuracy, capacity planning, backlog grooming, task assignments, blocked tasks, overdue items, or workload distribution."
 ---
 
 # Teamwork Sprint Manager

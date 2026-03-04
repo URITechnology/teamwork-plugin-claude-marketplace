@@ -25,30 +25,32 @@ _request_count = 0  # Track total API calls for diagnostics
 
 def get_config():
     """
-    Get Teamwork config using API key authentication.
-    The API key is stored in the TEAMWORK_API_KEY environment variable.
-    Credentials are cached in memory for the duration of the session.
+    Get Teamwork config, prompting the user if credentials aren't set.
+    Credentials are cached in memory for the duration of the session,
+    so the user is only asked once.
     """
     global _cached_config
     if _cached_config is not None:
         return _cached_config
 
     site = os.environ.get("TEAMWORK_SITE", "urimarketing.teamwork.com").strip()
-    api_key = os.environ.get("TEAMWORK_API_KEY", "").strip()
+    username = os.environ.get("TEAMWORK_USERNAME", "").strip()
+    password = os.environ.get("TEAMWORK_PASSWORD", "").strip()
 
-    # If API key isn't in env vars, print a message so the calling
-    # Claude skill knows to set it before retrying.
-    if not api_key:
+    # If credentials aren't in env vars, print a message so the calling
+    # Claude skill knows to ask the user and set them before retrying.
+    if not username or not password:
         print("CREDENTIALS_NEEDED", file=sys.stdout)
-        print("Teamwork API key is not configured for this session.", file=sys.stderr)
-        print("Please set it with:", file=sys.stderr)
-        print("  export TEAMWORK_API_KEY='your-api-key'", file=sys.stderr)
+        print("Teamwork credentials are not configured for this session.", file=sys.stderr)
+        print("Please set them with:", file=sys.stderr)
+        print("  export TEAMWORK_USERNAME='your-email@urimarketing.com'", file=sys.stderr)
+        print("  export TEAMWORK_PASSWORD='your-password'", file=sys.stderr)
         sys.exit(2)  # Exit code 2 = credentials needed (distinct from other errors)
 
     # Strip protocol if user included it
     site = site.replace("https://", "").replace("http://", "").rstrip("/")
 
-    _cached_config = {"site": site, "api_key": api_key}
+    _cached_config = {"site": site, "username": username, "password": password}
     return _cached_config
 
 
@@ -93,8 +95,8 @@ def make_request(endpoint, params=None, method="GET", body=None, max_retries=3,
     if os.environ.get("TW_DEBUG"):
         print(f"  DEBUG API: {method} {url}", file=sys.stderr)
 
-    # Basic auth: API key as username, any non-empty password
-    credentials = base64.b64encode(f"{config['api_key']}:x".encode()).decode()
+    # Basic auth: username and password
+    credentials = base64.b64encode(f"{config['username']}:{config['password']}".encode()).decode()
 
     headers = {
         "Authorization": f"Basic {credentials}",
@@ -132,7 +134,7 @@ def make_request(endpoint, params=None, method="GET", body=None, max_retries=3,
                 continue
             elif e.code == 401:
                 clear_config_cache()
-                print("ERROR: Authentication failed (401). Check your API key.", file=sys.stderr)
+                print("ERROR: Authentication failed (401). Check your username and password.", file=sys.stderr)
                 sys.exit(1)
             elif e.code == 404:
                 print(f"ERROR: Not found (404) for endpoint: {endpoint}", file=sys.stderr)

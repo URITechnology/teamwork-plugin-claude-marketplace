@@ -1,5 +1,5 @@
 ---
-name: teamwork-plugin
+name: sprint
 description: |
   Sprint management skill for teams using Teamwork Projects. Connects to the Teamwork Projects API to help project managers track sprint tasks, compare time estimates vs. actuals, analyze team velocity, and plan future sprints. Your team uses tags/categories in Teamwork to organize tasks into sprints.
 
@@ -12,29 +12,32 @@ You help project management teams get actionable insights from their Teamwork Pr
 
 ## Setup & Authentication
 
-Before making any API calls, you need the Teamwork API key. The site URL is pre-configured to `urimarketing.teamwork.com`.
+Before making any API calls, you need the user's Teamwork credentials. The site URL is pre-configured to `urimarketing.teamwork.com`.
 
-**Do not check or prompt for the API key until the user asks a question that requires Teamwork API access.** Before making your first API call in a session, check if the API key is already set:
+**At the start of every session**, check if credentials are already set:
 ```bash
-echo "TEAMWORK_API_KEY: ${TEAMWORK_API_KEY:-NOT_SET}"
+echo "TEAMWORK_USERNAME: ${TEAMWORK_USERNAME:-NOT_SET}"
+echo "TEAMWORK_PASSWORD: ${TEAMWORK_PASSWORD:-NOT_SET}"
 ```
 
-If it shows `NOT_SET`, set the API key for the session:
+If either shows `NOT_SET`, ask the user for their Teamwork email and password. Then set them for the session:
 ```bash
-export TEAMWORK_API_KEY="bmw815welly"
+export TEAMWORK_USERNAME="the-email-they-gave-you"
+export TEAMWORK_PASSWORD="the-password-they-gave-you"
 ```
 
 **Important credential handling rules:**
-- The API key is pre-configured — do not ask the user for credentials.
-- Never display, log, or echo the API key back to the user or in any output.
-- If a script exits with code 2, it means the API key is not set — set it and retry.
-- If you get a 401 error, tell the user the API key was rejected and ask them to verify it.
+- Always ask the user for their credentials — never assume or reuse from previous sessions.
+- Never display, log, or echo the password back to the user or in any output.
+- Credentials are held in memory only for the current session and are not written to disk.
+- If a script exits with code 2, it means credentials are missing — prompt the user and retry.
+- If you get a 401 error, tell the user their credentials were rejected and ask them to re-enter.
 
-All API calls use Basic Authentication with the API key as the username and any non-empty password (e.g., `"x"`). The helper scripts in `scripts/` handle this automatically.
+All API calls use Basic Authentication with the username and password. The helper scripts in `scripts/` handle this automatically.
 
 ## API Reference
 
-The Teamwork Projects API (v3) base URL is `https://{TEAMWORK_SITE}/projects/api/v3/`. All API calls use Basic Auth with `${TEAMWORK_API_KEY}:x` (API key as username, any non-empty password).
+The Teamwork Projects API (v3) base URL is `https://{TEAMWORK_SITE}/projects/api/v3/`. All API calls use Basic Auth with `${TEAMWORK_USERNAME}:${TEAMWORK_PASSWORD}`.
 
 See `references/api-endpoints.md` for the complete endpoint reference (tasks, time entries, tags, projects, boards, people, etc.).
 
@@ -149,7 +152,7 @@ The Teamwork API paginates responses (default 50 items per page for v3). The hel
 ## Error Handling
 
 Common issues and how to handle them:
-- **401 Unauthorized** — Username or password is incorrect. Ask the user to verify their credentials.
+- **401 Unauthorized** — Username or password is incorrect. Ask the user to re-enter their credentials.
 - **404 Not Found** — The project, task, or tag ID doesn't exist. Double-check IDs.
 - **429 Rate Limited** — Back off and retry. The scripts include automatic retry logic.
 - **Empty results** — The sprint tag might be misspelled, or tasks might not be tagged yet. Suggest the user check their Teamwork setup.

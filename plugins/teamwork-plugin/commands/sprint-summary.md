@@ -13,13 +13,15 @@ Generate a comprehensive Excel sprint summary with task status breakdown and tea
    - **Sprint start date** in YYYY-MM-DD format (e.g., 2026-02-24)
    - **Sprint end date** in YYYY-MM-DD format (e.g., 2026-03-07)
 
-2. **Verify API key** is set before running the script:
+2. **Verify credentials** are set before running the script:
    ```bash
-   echo "TEAMWORK_API_KEY: ${TEAMWORK_API_KEY:-NOT_SET}"
+   echo "TEAMWORK_USERNAME: ${TEAMWORK_USERNAME:-NOT_SET}"
+   echo "TEAMWORK_PASSWORD: ${TEAMWORK_PASSWORD:-NOT_SET}"
    ```
-   If it shows `NOT_SET`, set the API key:
+   If either shows `NOT_SET`, ask the user for their Teamwork email and password, then export them:
    ```bash
-   export TEAMWORK_API_KEY="bmw815welly"
+   export TEAMWORK_USERNAME="their-email"
+   export TEAMWORK_PASSWORD="their-password"
    ```
 
 3. **Ensure openpyxl is installed**:
@@ -35,7 +37,7 @@ Generate a comprehensive Excel sprint summary with task status breakdown and tea
 5. **Present the results** to the user:
    - Tell them the file name and location of the generated Excel report
    - Show a brief text summary of the key metrics from the JSON output
-   - If the script exits with code 2, set the API key and retry
+   - If the script exits with code 2, prompt for credentials and retry
    - If the script reports an error finding the sprint tag, show the available tags and ask the user to clarify
 
 ## Output

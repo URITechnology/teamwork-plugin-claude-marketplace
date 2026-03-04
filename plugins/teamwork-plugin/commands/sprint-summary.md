@@ -18,7 +18,10 @@ Generate a comprehensive Excel sprint summary with task status breakdown and tea
    echo "TEAMWORK_USERNAME: ${TEAMWORK_USERNAME:-NOT_SET}"
    echo "TEAMWORK_PASSWORD: ${TEAMWORK_PASSWORD:-NOT_SET}"
    ```
-   If either shows `NOT_SET`, ask the user for their Teamwork email and password, then export them:
+   If either shows `NOT_SET`, collect credentials using the question-prompt interface (AskUserQuestion) — **do NOT ask via regular chat messages**:
+   - Use AskUserQuestion to ask for their Teamwork email address (header: "Credentials")
+   - Use AskUserQuestion to ask for their password (header: "Password")
+   - Then silently export them (never echo the password):
    ```bash
    export TEAMWORK_USERNAME="their-email"
    export TEAMWORK_PASSWORD="their-password"

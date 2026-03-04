@@ -1,7 +1,7 @@
 {
   "name": "teamwork-plugin",
   "description": "Sprint management for Teamwork Projects - track task status, compare estimates vs. actuals, analyze velocity, and plan future sprints. Connects to urimarketing.teamwork.com via the Teamwork API.",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": {
     "name": "URI Technology",
     "email": "thughes@urimarketing.com"

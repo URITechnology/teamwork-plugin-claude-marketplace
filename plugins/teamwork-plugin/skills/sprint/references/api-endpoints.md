@@ -2,10 +2,10 @@
 
 Base URL: `https://{TEAMWORK_SITE}/projects/api/v3` (default site: `urimarketing.teamwork.com`)
 
-Authentication: Basic Auth — username is the user's Teamwork email, password is their Teamwork password.
+Authentication: Basic Auth — API key as the username with any non-empty password.
 
 ```
-Authorization: Basic base64({USERNAME}:{PASSWORD})
+Authorization: Basic base64({TEAMWORK_API_KEY}:x)
 ```
 
 All responses return JSON. Pagination uses `?page=N&pageSize=50` (default 50 items).

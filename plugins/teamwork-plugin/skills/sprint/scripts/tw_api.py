@@ -25,32 +25,30 @@ _request_count = 0  # Track total API calls for diagnostics
 
 def get_config():
     """
-    Get Teamwork config, prompting the user if credentials aren't set.
-    Credentials are cached in memory for the duration of the session,
-    so the user is only asked once.
+    Get Teamwork config using API key authentication.
+    The API key is stored in the TEAMWORK_API_KEY environment variable.
+    Credentials are cached in memory for the duration of the session.
     """
     global _cached_config
     if _cached_config is not None:
         return _cached_config
 
     site = os.environ.get("TEAMWORK_SITE", "urimarketing.teamwork.com").strip()
-    username = os.environ.get("TEAMWORK_USERNAME", "").strip()
-    password = os.environ.get("TEAMWORK_PASSWORD", "").strip()
+    api_key = os.environ.get("TEAMWORK_API_KEY", "").strip()
 
-    # If credentials aren't in env vars, print a message so the calling
-    # Claude skill knows to ask the user and set them before retrying.
-    if not username or not password:
+    # If API key isn't in env vars, print a message so the calling
+    # Claude skill knows to set it before retrying.
+    if not api_key:
         print("CREDENTIALS_NEEDED", file=sys.stdout)
-        print("Teamwork credentials are not configured for this session.", file=sys.stderr)
-        print("Please set them with:", file=sys.stderr)
-        print("  export TEAMWORK_USERNAME='your-email@urimarketing.com'", file=sys.stderr)
-        print("  export TEAMWORK_PASSWORD='your-password'", file=sys.stderr)
+        print("Teamwork API key is not configured for this session.", file=sys.stderr)
+        print("Please set it with:", file=sys.stderr)
+        print("  export TEAMWORK_API_KEY='your-api-key'", file=sys.stderr)
         sys.exit(2)  # Exit code 2 = credentials needed (distinct from other errors)
 
     # Strip protocol if user included it
     site = site.replace("https://", "").replace("http://", "").rstrip("/")
 
-    _cached_config = {"site": site, "username": username, "password": password}
+    _cached_config = {"site": site, "api_key": api_key}
     return _cached_config
 
 
@@ -60,7 +58,8 @@ def clear_config_cache():
     _cached_config = None
 
 
-def make_request(endpoint, params=None, method="GET", body=None, max_retries=3, api_version="v3"):
+def make_request(endpoint, params=None, method="GET", body=None, max_retries=3,
+                 api_version="v3", return_headers=False):
     """
     Make an authenticated request to the Teamwork API.
 
@@ -71,9 +70,10 @@ def make_request(endpoint, params=None, method="GET", body=None, max_retries=3, 
         body: dict to send as JSON body (for POST/PUT)
         max_retries: number of retries on rate limit
         api_version: API version to use ('v2' or 'v3', default 'v3')
+        return_headers: if True, return (body, headers_dict) tuple
 
     Returns:
-        Parsed JSON response
+        Parsed JSON response, or (body, headers_dict) if return_headers=True
     """
     global _last_request_time, _request_count
 
@@ -93,8 +93,8 @@ def make_request(endpoint, params=None, method="GET", body=None, max_retries=3, 
     if os.environ.get("TW_DEBUG"):
         print(f"  DEBUG API: {method} {url}", file=sys.stderr)
 
-    # Basic auth: username and password
-    credentials = base64.b64encode(f"{config['username']}:{config['password']}".encode()).decode()
+    # Basic auth: API key as username, any non-empty password
+    credentials = base64.b64encode(f"{config['api_key']}:x".encode()).decode()
 
     headers = {
         "Authorization": f"Basic {credentials}",
@@ -117,7 +117,11 @@ def make_request(endpoint, params=None, method="GET", body=None, max_retries=3, 
             with urllib.request.urlopen(req) as response:
                 _last_request_time = time.time()
                 _request_count += 1
-                return json.loads(response.read().decode("utf-8"))
+                parsed_body = json.loads(response.read().decode("utf-8"))
+                if return_headers:
+                    resp_headers = dict(response.getheaders())
+                    return parsed_body, resp_headers
+                return parsed_body
 
         except urllib.error.HTTPError as e:
             if e.code == 429:
@@ -128,7 +132,7 @@ def make_request(endpoint, params=None, method="GET", body=None, max_retries=3, 
                 continue
             elif e.code == 401:
                 clear_config_cache()
-                print("ERROR: Authentication failed (401). Check your username and password.", file=sys.stderr)
+                print("ERROR: Authentication failed (401). Check your API key.", file=sys.stderr)
                 sys.exit(1)
             elif e.code == 404:
                 print(f"ERROR: Not found (404) for endpoint: {endpoint}", file=sys.stderr)
@@ -155,6 +159,9 @@ def fetch_all_pages(endpoint, params=None, result_key=None, page_size=500, api_v
     """
     Fetch all pages of a paginated endpoint.
 
+    Handles both v3 (meta.page.hasMore in JSON body) and v2 (X-Page/X-Pages
+    HTTP response headers) pagination styles.
+
     Args:
         endpoint: API path
         params: query parameters
@@ -172,11 +179,20 @@ def fetch_all_pages(endpoint, params=None, result_key=None, page_size=500, api_v
     params["page"] = 1
 
     all_items = []
+    use_v2_pagination = (api_version == "v2")
 
     while True:
-        response = make_request(endpoint, params, api_version=api_version)
-        if response is None:
-            break
+        if use_v2_pagination:
+            result = make_request(endpoint, params, api_version=api_version,
+                                  return_headers=True)
+            if result is None:
+                break
+            response, resp_headers = result
+        else:
+            response = make_request(endpoint, params, api_version=api_version)
+            resp_headers = None
+            if response is None:
+                break
 
         # Auto-detect result key if not specified
         if result_key is None:
@@ -191,9 +207,26 @@ def fetch_all_pages(endpoint, params=None, result_key=None, page_size=500, api_v
         items = response.get(result_key, [])
         all_items.extend(items)
 
-        # Check for more pages
-        meta = response.get("meta", {}).get("page", {})
-        if not meta.get("hasMore", False):
+        # Check for more pages — strategy depends on API version
+        has_more = False
+
+        if use_v2_pagination and resp_headers:
+            # v2 uses HTTP response headers: X-Page, X-Pages, X-Records
+            total_pages = int(resp_headers.get("X-Pages", resp_headers.get("x-pages", "1")))
+            current_page = int(resp_headers.get("X-Page", resp_headers.get("x-page", "1")))
+            has_more = current_page < total_pages
+
+            if os.environ.get("TW_DEBUG"):
+                total_records = resp_headers.get("X-Records", resp_headers.get("x-records", "?"))
+                print(f"  DEBUG pagination: page {current_page}/{total_pages}, "
+                      f"{total_records} total records, {len(items)} this page",
+                      file=sys.stderr)
+        else:
+            # v3 uses meta.page.hasMore in JSON body
+            meta = response.get("meta", {}).get("page", {})
+            has_more = meta.get("hasMore", False)
+
+        if not has_more:
             break
 
         params["page"] += 1
@@ -375,9 +408,16 @@ def get_time_entries_by_date_range(from_date, to_date, user_id=None, user_ids=No
         List of time entry dicts (with 'minutes' normalized to total minutes)
     """
     # Use v2 API — the v3 endpoint silently ignores fromDate/toDate/userId.
+    # Include archived/tentative projects and all billable/invoiced types
+    # to match the Teamwork web UI and avoid silently excluding entries.
     params = {
         "fromDate": from_date.replace("-", ""),
         "toDate": to_date.replace("-", ""),
+        "includeArchivedProjects": "true",
+        "projectStatus": "all",
+        "includeTentativeProjects": "true",
+        "invoicedType": "all",
+        "billableType": "all",
     }
     if user_ids:
         params["userId"] = ",".join(str(uid) for uid in user_ids)

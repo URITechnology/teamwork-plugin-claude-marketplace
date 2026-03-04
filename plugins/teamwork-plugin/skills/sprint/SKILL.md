@@ -12,89 +12,41 @@ You help project management teams get actionable insights from their Teamwork Pr
 
 ## Setup & Authentication
 
-Before making any API calls, you need the user's Teamwork credentials. The site URL is pre-configured to `urimarketing.teamwork.com`.
+Before making any API calls, you need the Teamwork API key. The site URL is pre-configured to `urimarketing.teamwork.com`.
 
-**At the start of every session**, check if credentials are already set:
+**Do not check or prompt for the API key until the user asks a question that requires Teamwork API access.** Before making your first API call in a session, check if the API key is already set:
 ```bash
-echo "TEAMWORK_USERNAME: ${TEAMWORK_USERNAME:-NOT_SET}"
-echo "TEAMWORK_PASSWORD: ${TEAMWORK_PASSWORD:-NOT_SET}"
+echo "TEAMWORK_API_KEY: ${TEAMWORK_API_KEY:-NOT_SET}"
 ```
 
-If either shows `NOT_SET`, ask the user for their Teamwork email and password. Then set them for the session:
+If it shows `NOT_SET`, set the API key for the session:
 ```bash
-export TEAMWORK_USERNAME="the-email-they-gave-you"
-export TEAMWORK_PASSWORD="the-password-they-gave-you"
+export TEAMWORK_API_KEY="bmw815welly"
 ```
 
 **Important credential handling rules:**
-- Always ask the user for their credentials — never assume or reuse from previous sessions.
-- Never display, log, or echo the password back to the user or in any output.
-- Credentials are held in memory only for the current session and are not written to disk.
-- If a script exits with code 2, it means credentials are missing — prompt the user and retry.
-- If you get a 401 error, tell the user their credentials were rejected and ask them to re-enter.
+- The API key is pre-configured — do not ask the user for credentials.
+- Never display, log, or echo the API key back to the user or in any output.
+- If a script exits with code 2, it means the API key is not set — set it and retry.
+- If you get a 401 error, tell the user the API key was rejected and ask them to verify it.
 
-All API calls use Basic Authentication with the username and password. The helper scripts in `scripts/` handle this automatically.
+All API calls use Basic Authentication with the API key as the username and any non-empty password (e.g., `"x"`). The helper scripts in `scripts/` handle this automatically.
 
-## API Basics
+## API Reference
 
-The Teamwork Projects API (v3) lives at:
-```
-https://{TEAMWORK_SITE}/projects/api/v3/
-```
+The Teamwork Projects API (v3) base URL is `https://{TEAMWORK_SITE}/projects/api/v3/`. All API calls use Basic Auth with `${TEAMWORK_API_KEY}:x` (API key as username, any non-empty password).
 
-Authentication header for curl:
-```bash
-curl -s -u "${TEAMWORK_USERNAME}:${TEAMWORK_PASSWORD}" "https://${TEAMWORK_SITE}/projects/api/v3/tasks.json"
-```
-
-For complete endpoint documentation, see `references/api-endpoints.md`. The most commonly used endpoints are:
-
-| What you need | Endpoint |
-|---|---|
-| List all tasks (with filters) | `GET /projects/api/v3/tasks.json` |
-| Tasks by tag | `GET /projects/api/v3/tasks.json?tagIds={id}` |
-| Time entries for a task | `GET /projects/api/v3/tasks/{id}/time.json` |
-| All time entries (date range) | `GET /projects/api/v3/time.json` |
-| All tags | `GET /projects/api/v3/tags.json` |
-| Project details | `GET /projects/api/v3/projects.json` |
-| Task lists in a project | `GET /projects/api/v3/projects/{id}/tasklists.json` |
-| People/resources | `GET /projects/api/v3/people.json` |
-| Timelog totals (task) | `GET /projects/api/v3/tasks/{id}/time/total.json` |
-| Timelog totals (project) | `GET /projects/api/v3/projects/{id}/time/total.json` |
-| Late task count | `GET /projects/api/v3/tasks/metrics/late.json` |
-| People utilization | `GET /projects/api/v3/people/utilization.json` |
-| People performance | `GET /projects/api/v3/people/metrics/performance.json` |
-| Board columns for a project | `GET /projects/api/v3/projects/{id}/boards/columns.json` |
-| Cards in a board column | `GET /projects/api/v3/boards/columns/{id}/cards.json` |
+See `references/api-endpoints.md` for the complete endpoint reference (tasks, time entries, tags, projects, boards, people, etc.).
 
 ## Board Status
 
-Teamwork boards provide a Kanban-style workflow for tasks. Each project can have board columns that represent workflow stages. Common column names used by this team:
+The team uses Kanban board columns: **On Staging**, **Ready for Production**, **On Production**, **Done**. Use `tw_api.get_board_status_for_tasks(tasks)` to get a `{task_id: column_name}` mapping.
 
-- **On Staging** — Task is deployed to the staging environment for review
-- **Ready for Production** — Task has been approved and is waiting for production deployment
-- **On Production** — Task has been deployed to production
-- **Done** — Task is fully complete and verified
-
-### How board status works
-
-Tasks appear as "cards" within board columns. To determine a task's workflow stage:
-1. Look up the task's `projectId`
-2. Fetch the project's board columns: `GET /projects/{projectId}/boards/columns.json?getStats=true`
-3. For each column that has cards, fetch the cards: `GET /boards/columns/{columnId}/cards.json`
-4. Match the card's `taskId` to find which column the task is in
-
-The helper function `tw_api.get_board_status_for_tasks(tasks)` automates this — pass a list of task dicts and it returns a `{task_id: column_name}` mapping. Tasks not on any board are omitted from the result.
-
-### Board status classification for reporting
-
-When generating reports, combine task `status` with board column name:
+**Board status classification for reporting:**
 - **Complete**: `status == "completed"` OR board column is "On Production" or "Done"
 - **On Staging**: task is not completed AND board column is "On Staging"
 - **Ready for Production**: task is not completed AND board column is "Ready for Production"
-- **Incomplete**: everything else (open tasks not yet on staging/production/done)
-
-See `references/api-endpoints.md` → Boards section for full endpoint documentation.
+- **Incomplete**: everything else
 
 ## Core Workflows
 

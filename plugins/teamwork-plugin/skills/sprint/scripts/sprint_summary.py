@@ -5,7 +5,7 @@ Sprint Summary — Generate an Excel report with task breakdown and time analysi
 Usage:
     python3 sprint_summary.py --sprint-number 45 --start-date 2026-02-24 --end-date 2026-03-07
 
-Requires: TEAMWORK_SITE and TEAMWORK_USERNAME/PASSWORD environment variables.
+Requires: TEAMWORK_SITE and TEAMWORK_API_KEY environment variables.
 Requires: openpyxl (pip install openpyxl)
 
 Optimized to use the Teamwork workflows endpoint with sideloaded data

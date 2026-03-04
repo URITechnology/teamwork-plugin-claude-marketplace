@@ -3,7 +3,7 @@ name: sprint
 description: |
   Sprint management skill for teams using Teamwork Projects. Connects to the Teamwork Projects API to help project managers track sprint tasks, compare time estimates vs. actuals, analyze team velocity, and plan future sprints. Your team uses tags/categories in Teamwork to organize tasks into sprints.
 
-  Use this skill whenever the user mentions: sprints, sprint planning, sprint review, velocity, burndown, task status in Teamwork, time tracking analysis, estimate accuracy, capacity planning, backlog grooming, or any project management question that involves Teamwork Projects data. Also trigger when the user asks about task assignments, who's working on what, blocked tasks, overdue items, or workload distribution — even if they don't explicitly say "Teamwork" — as long as a Teamwork connection has been configured.
+  Use this skill whenever the user mentions: sprints, sprint planning, sprint review, velocity, burndown, task status in Teamwork, time tracking analysis, estimate accuracy, capacity planning, backlog grooming, or any project management question that involves Teamwork Projects data. Also trigger when the user asks about task assignments, who's working on what, blocked tasks, overdue items, or workload distribution - even if they don't explicitly say "Teamwork" - as long as a Teamwork connection has been configured.
 ---
 
 # Teamwork Sprint Manager
@@ -51,9 +51,7 @@ All API calls use Basic Authentication with the username and password. The helpe
 
 ## API Reference
 
-The Teamwork Projects API (v3) base URL is `https://{TEAMWORK_SITE}/projects/api/v3/`. All API calls use Basic Auth with `${TEAMWORK_USERNAME}:${TEAMWORK_PASSWORD}`.
-
-See `references/api-endpoints.md` for the complete endpoint reference (tasks, time entries, tags, projects, boards, people, etc.).
+The Teamwork Projects API base URL is `https://urimarketing.teamwork.com/projects/api/v3/` (use `v2` for time entries). All API calls use Basic Auth with `${TEAMWORK_USERNAME}:${TEAMWORK_PASSWORD}`. The helper scripts in `scripts/` handle all API calls — use them instead of making raw API requests.
 
 ## Board Status
 
@@ -67,113 +65,37 @@ The team uses Kanban board columns: **On Staging**, **Ready for Production**, **
 
 ## Core Workflows
 
+All scripts are in the `scripts/` directory. They handle API calls, pagination, and error handling automatically. Run them with `python3`.
+
 ### 1. Sprint Task Status Overview
-
-When someone asks "What's the status of the current sprint?" or "Show me where we are":
-
-1. **Identify the sprint tag** — Look up tags matching the sprint naming pattern (e.g., `Sprint-25`). If the user says "current sprint" without specifying, find the most recent sprint tag or ask.
-2. **Fetch tasks for that tag** — Use the tag ID to filter tasks.
-3. **Summarize by status** — Group tasks into categories: completed, in progress, not started, blocked/at risk.
-4. **Highlight concerns** — Flag tasks that are overdue, unassigned, or have been "in progress" for an unusually long time.
-
-Use the helper script for a quick overview:
+For questions about sprint status, progress, or task breakdown:
 ```bash
 python3 scripts/sprint_overview.py --sprint-tag "Sprint-25"
 ```
-
-Present the results as a clear summary — not a raw data dump. The user wants to know: are we on track? What needs attention? Who might be overloaded?
+If the user says "current sprint" without a number, ask which sprint.
 
 ### 2. Time Estimates vs. Actuals
-
-When someone asks "How accurate were our estimates?" or "Where did we go over?":
-
-1. **Fetch tasks for the sprint** — Same tag-based lookup as above.
-2. **For each task, compare estimated time to logged time** — The task object includes `estimatedMinutes`; time entries give you actual logged minutes.
-3. **Calculate variance** — For each task: `(actual - estimated) / estimated * 100` to get percentage over/under.
-4. **Surface patterns** — Which types of tasks consistently run over? Which team members estimate most/least accurately? Are there tasks with zero estimates (a process gap)?
-
-Use the helper script:
+For questions about estimate accuracy or time overruns:
 ```bash
 python3 scripts/time_analysis.py --sprint-tag "Sprint-25"
 ```
 
-The goal is to help the team calibrate future estimates. Be specific: "Backend API tasks averaged 40% over estimate, while frontend tasks were within 10%" is more useful than "some tasks went over."
-
 ### 3. Sprint Planning & Velocity
-
-When someone asks "Help us plan the next sprint" or "What's our velocity?":
-
-1. **Calculate historical velocity** — Look at the last 3-5 completed sprints. For each, sum the estimated hours of completed tasks. Average this to get velocity (story points or hours per sprint, depending on team convention).
-2. **Assess capacity** — Check team member availability for the upcoming sprint. Factor in any known absences.
-3. **Recommend sprint scope** — Based on velocity and capacity, suggest how many hours/points of work to pull into the next sprint.
-4. **Identify carryover** — Find incomplete tasks from the current sprint that need to roll over.
-
-Use the helper script:
+For velocity analysis and sprint planning:
 ```bash
 python3 scripts/velocity_report.py --last-n-sprints 5
 ```
 
-Be honest about uncertainty. If the team's velocity has high variance, say so — "Your velocity ranges from 80 to 140 hours per sprint, so I'd plan conservatively around 90-100 hours."
+### 4. Sprint Summary Report (Excel)
+When the user asks for a sprint summary or uses `/teamwork-plugin:sprint-summary`:
+```bash
+pip install openpyxl 2>/dev/null || pip3 install openpyxl 2>/dev/null
+python3 scripts/sprint_summary.py --sprint-number <N> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD>
+```
+Collect the sprint number, start date, and end date from the user first. Generates `Sprint_{N}_Summary.xlsx`.
 
-### 4. Sprint Summary Report
-
-When someone asks for a sprint summary or uses the `/teamwork-plugin:sprint-summary` command:
-
-1. **Collect inputs** — Sprint number (e.g., 45), sprint start date (YYYY-MM-DD), and sprint end date (YYYY-MM-DD).
-2. **Verify credentials** are set (same as session startup check above).
-3. **Run the sprint summary script**:
-   ```bash
-   pip install openpyxl 2>/dev/null || pip3 install openpyxl 2>/dev/null
-   python3 scripts/sprint_summary.py --sprint-number <N> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD>
-   ```
-4. **Present results** — Tell the user the file name and location of the generated Excel report, and show key metrics from the JSON output.
-
-The script generates `Sprint_{N}_Summary.xlsx` with two tabs:
-
-- **Sprint Task Summary** — Breaks down tasks by type (Carryover, Planned, Unplanned) with counts and percentages for Completed, Incomplete, On Staging, and Ready for Production statuses. Also shows estimated vs. logged hours for completed tasks.
-- **Sprint Time Summary** — Per-person time breakdown for Rodolfo Ortiz, Ulises Becerra, and Fernando Mendez showing Total, Billable, Non-Billable, Planned, Unplanned, and Other hours.
-
-**Task categorization logic:**
-- **Carryover**: Has current sprint tag AND previous sprint tag, does NOT have "unplanned" tag
-- **Planned**: Has current sprint tag only, NOT previous sprint tag, NOT "unplanned" tag
-- **Unplanned**: Has current sprint tag AND has "unplanned" tag (case-insensitive)
-
-**Non-billable classification:** A time entry is non-billable if the task name, task list name, or project name contains "Non-Billable", OR if the project name starts with "URI-".
-
-If the script exits with code 2, prompt for credentials and retry. If it reports an error finding the sprint tag, show the available tags and ask the user to clarify.
-
-### 5. Ad-Hoc Questions
-
-The team will also ask things like:
-- "Who has the most tasks right now?" → Query tasks grouped by assignee
-- "What's blocked?" → Filter for tasks with a `blocked` status or tag
-- "How much time did we log last week?" → Time entries with date range filter
-- "Show me all tasks tagged as `urgent`" → Tag-based query
-
-For these, compose the right API call from the reference docs, fetch the data, and answer conversationally. Don't over-engineer — just get the data and answer the question.
+If any script exits with code 2, credentials are missing - prompt via AskUserQuestion and retry.
 
 ## Output Guidelines
 
-- **Summarize first, details on request.** Lead with the headline ("Sprint-25 is 68% complete with 3 days left, but 4 tasks are at risk") and offer to drill down.
-- **Use tables for comparisons.** When showing estimates vs. actuals or task-by-task breakdowns, a markdown table is easier to scan than prose.
-- **Name names when relevant.** "Sarah has 3 overdue tasks" is more actionable than "some tasks are overdue." The team expects this level of specificity.
-- **Offer to export.** If the user needs to share findings with stakeholders, offer to generate a formatted report (markdown, or a spreadsheet using the xlsx skill).
-
-## Pagination
-
-The Teamwork API paginates responses (default 50 items per page for v3). The helper scripts handle pagination automatically. If you're making manual curl calls, check for `"meta": {"page": {"hasMore": true}}` in the response and use `?page=2`, `?page=3`, etc. to get all results.
-
-## Error Handling
-
-Common issues and how to handle them:
-- **401 Unauthorized** — Username or password is incorrect. Ask the user to re-enter their credentials.
-- **404 Not Found** — The project, task, or tag ID doesn't exist. Double-check IDs.
-- **429 Rate Limited** — Back off and retry. The scripts include automatic retry logic.
-- **Empty results** — The sprint tag might be misspelled, or tasks might not be tagged yet. Suggest the user check their Teamwork setup.
-
-## Important Notes
-
-- The Teamwork API returns times in minutes. Convert to hours for display (divide by 60) unless the user prefers minutes.
-- Tag names are case-sensitive in the API. If a query returns nothing, try different casing.
-- The v3 API uses JSON responses. Some older Teamwork endpoints use v1 (`/projects/api/v1/`), which wraps responses differently. Prefer v3 when available.
-- If the user's Teamwork instance uses a custom domain or is self-hosted, the base URL pattern may differ. Ask if the standard URL doesn't work.
+Lead with a summary headline, then offer details. Use tables for comparisons. Name team members specifically. Display times in hours (API returns minutes).

@@ -33,9 +33,9 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-BOARD_STATUS_COMPLETE = ("On Production", "Done")
-BOARD_STATUS_STAGING = "On Staging"
-BOARD_STATUS_READY_PROD = "Ready for Production"
+BOARD_STATUS_COMPLETE = ("on production", "done")
+BOARD_STATUS_STAGING = "on staging"
+BOARD_STATUS_READY_PROD = "ready for production"
 
 TIME_SUMMARY_PEOPLE = [
     "Rodolfo Ortiz",
@@ -153,7 +153,7 @@ def classify_task_status(task, board_status_map):
     """
     task_id = int(task.get("id", 0))
     status = task.get("status", "").lower()
-    board_col = board_status_map.get(task_id, "")
+    board_col = board_status_map.get(task_id, "").lower()
 
     # Complete: task status is completed, or board column is On Production / Done
     if status == "completed" or board_col in BOARD_STATUS_COMPLETE:
@@ -665,7 +665,43 @@ def sprint_summary(sprint_number, start_date, end_date):
      tag_map, user_map, board_status_map) = tw_api.get_all_workflow_tasks(
         tag_id=current_tag_id
     )
-    print(f"  Found {len(tasks)} tasks in sprint.", file=sys.stderr)
+    print(f"  Found {len(tasks)} tasks in sprint (from workflow).", file=sys.stderr)
+
+    # ------------------------------------------------------------------
+    # Step 2b: Supplement with tag-based fetch to catch tasks not on
+    #          the PMD workflow (e.g., tasks on other project boards).
+    # ------------------------------------------------------------------
+    print("  [2b] Fetching all sprint-tagged tasks to find any missing...", file=sys.stderr)
+    all_tagged_tasks = tw_api.get_tasks_for_tag(current_tag_id)
+    workflow_task_ids = {int(t["id"]) for t in tasks}
+    extra_tasks = [t for t in all_tagged_tasks if int(t["id"]) not in workflow_task_ids]
+
+    if extra_tasks:
+        print(f"  Found {len(extra_tasks)} additional tasks not on PMD workflow.", file=sys.stderr)
+
+        # Get board status for extra tasks via project board columns
+        extra_board_map = tw_api.get_board_status_for_tasks(extra_tasks)
+        board_status_map.update(extra_board_map)
+        for t in extra_tasks:
+            tid = int(t["id"])
+            bs = extra_board_map.get(tid, "(no board)")
+            print(f"    Task {tid}: board='{bs}' status='{t.get('status', '')}' — {t.get('name', '')[:60]}", file=sys.stderr)
+
+        # Merge extra tasks and extract sideloaded data
+        tasks.extend(extra_tasks)
+
+        # Extract tag info from extra tasks for categorize_tasks
+        for task in extra_tasks:
+            tag_objs = task.get("tags") or []
+            for tag_obj in tag_objs:
+                if isinstance(tag_obj, dict) and tag_obj.get("id"):
+                    tid = int(tag_obj["id"])
+                    if tid not in tag_map:
+                        tag_map[tid] = tag_obj
+
+        print(f"  Total tasks after merging: {len(tasks)}", file=sys.stderr)
+    else:
+        print("  All sprint tasks found on PMD workflow.", file=sys.stderr)
 
     # ------------------------------------------------------------------
     # Step 3: Resolve person IDs from sideloaded users (ZERO API calls)

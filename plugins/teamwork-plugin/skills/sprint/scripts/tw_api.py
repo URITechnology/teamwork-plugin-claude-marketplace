@@ -519,8 +519,8 @@ def get_workflow_stages(workflow_id=None):
     """
     Discover all stages (columns) in a workflow.
 
-    Tries the workflow detail endpoint first. If that fails, returns None
-    so the caller can fall back to board columns.
+    Tries the stages sub-endpoint first (returns full stage objects with names).
+    Falls back to the workflow detail endpoint if needed.
 
     Args:
         workflow_id: Teamwork workflow ID (defaults to PMD_WORKFLOW_ID)
@@ -531,27 +531,35 @@ def get_workflow_stages(workflow_id=None):
     if workflow_id is None:
         workflow_id = PMD_WORKFLOW_ID
 
-    # Try fetching workflow details which may include stages
-    response = make_request(f"/workflows/{workflow_id}.json")
-    if response:
-        # Check for stages in the response
-        workflow = response.get("workflow", response)
-        stages = workflow.get("stages") or workflow.get("columns") or []
-        if stages:
-            return {int(s.get("id")): s.get("name", "") for s in stages}
-
-    # Try the stages sub-endpoint
+    # Try the stages sub-endpoint first — it returns full stage objects with names
     response = make_request(f"/workflows/{workflow_id}/stages.json")
     if response:
         stages = response.get("stages") or response.get("columns") or []
         if isinstance(stages, list) and stages:
-            return {int(s.get("id")): s.get("name", "") for s in stages}
+            result = {int(s.get("id")): s.get("name", "") for s in stages}
+            # Verify we actually got names (not just IDs)
+            if any(name for name in result.values()):
+                return result
         # Might be a paginated response
         for key in response:
             if isinstance(response[key], list) and response[key]:
                 items = response[key]
                 if items and isinstance(items[0], dict) and "name" in items[0]:
                     return {int(s.get("id")): s.get("name", "") for s in items}
+
+    # Fallback: workflow detail endpoint (stages here may lack names)
+    response = make_request(f"/workflows/{workflow_id}.json")
+    if response:
+        workflow = response.get("workflow", response)
+        stages = workflow.get("stages") or workflow.get("columns") or []
+        if stages:
+            result = {int(s.get("id")): s.get("name", "") for s in stages}
+            # Only return if we actually got names
+            if any(name for name in result.values()):
+                return result
+            # We have stage IDs but no names — return None to trigger
+            # caller's fallback rather than returning empty names
+            return None
 
     return None
 
